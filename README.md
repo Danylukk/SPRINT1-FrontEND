@@ -1,76 +1,38 @@
-# Sprint 1 - Motor Digital Twin
+# Sprint 2 - Motor Digital Twin
 
-Projeto acadêmico desenvolvido em Streamlit para a Sprint 1: **Fundamentos do Ativo e Interface de Cadastro**.
+Projeto acadêmico em Streamlit para cadastro técnico e acompanhamento operacional simulado de motores. A Sprint 2 evolui a base da Sprint 1 sem refazê-la: mantém `data/equipments.json`, cadastro, consulta, ficha técnica e Dados Brutos, e adiciona um **Dashboard Operacional** com histórico local, alertas e gráficos temporais.
 
-A aplicação organiza o cadastro técnico de motores/equipamentos, permite a consulta dos ativos registrados e apresenta uma visualização inicial de dados brutos simulados com conversão para unidades compreensíveis. A proposta é criar uma base simples, funcional e bem separada em camadas para evolução futura rumo a um Digital Twin com dados reais.
+## Funcionalidades
 
-## Objetivo da Sprint
+- Dashboard geral dos ativos cadastrados.
+- Cadastro técnico com validação de campos obrigatórios e bloqueio de TAG duplicada.
+- Consulta de equipamentos e ficha técnica individual.
+- Dados Brutos simulados, mantendo a camada antiga sem MQTT real.
+- Dashboard Operacional por área/planta usando `local_instalacao`.
+- Seleção de TAG filtrada pela área.
+- Telemetria atual simulada por temperatura, vibração, corrente e rotação.
+- Histórico em `data/telemetry_history.csv`.
+- Gráficos interativos com Plotly.
+- Alertas visuais por severidade.
+- Placa simulada do motor com placeholder visual em HTML/CSS e card técnico dinâmico.
 
-Desenvolver uma interface funcional para:
-
-- Cadastrar tecnicamente motores e equipamentos.
-- Consultar ativos cadastrados.
-- Abrir uma ficha técnica organizada por equipamento.
-- Simular dados brutos de sensores.
-- Converter os dados simulados para temperatura, corrente e rotação em unidades compreensíveis.
-- Preparar a estrutura para integração futura com IoT/MQTT, sem implementar MQTT real nesta Sprint.
-
-## Tecnologias usadas
+## Tecnologias
 
 - Python
 - Streamlit
 - Pandas
-- JSON para persistência local
+- Plotly
+- JSON para cadastro técnico local
+- CSV para histórico de telemetria local
 
-## Requisitos atendidos
-
-- Sidebar com menu principal.
-- Dashboard com indicadores dos equipamentos cadastrados.
-- Cadastro técnico de ativos.
-- Validação de campos obrigatórios.
-- Confirmação humana antes de salvar o cadastro.
-- Bloqueio de TAG duplicada.
-- Consulta de equipamentos em tabela.
-- Ficha técnica organizada em blocos.
-- Status com cor semântica.
-- Visualização de dados brutos simulados.
-- Tabela com valor bruto, fórmula/conversão aplicada e valor convertido.
-- Métricas em cards para temperatura, corrente e rotação.
-- Persistência local em `data/equipments.json`.
-- Criação automática de dados iniciais de exemplo quando o JSON está vazio.
-- Estrutura separada entre interface, serviços, repositório e modelo.
-
-## Estrutura do projeto
-
-```text
-sprint1_motor_digital_twin/
-├── app.py
-├── requirements.txt
-├── README.md
-├── .gitignore
-├── data/
-│   └── equipments.json
-├── src/
-│   ├── __init__.py
-│   ├── models/
-│   │   └── equipment.py
-│   ├── services/
-│   │   ├── equipment_service.py
-│   │   └── sensor_service.py
-│   ├── repositories/
-│   │   └── equipment_repository.py
-│   └── ui/
-│       ├── components.py
-│       └── pages.py
-```
-
-## Como instalar
+## Como executar
 
 ```bash
 cd sprint1_motor_digital_twin
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+streamlit run app.py
 ```
 
 No Linux/macOS, ative o ambiente com:
@@ -79,31 +41,67 @@ No Linux/macOS, ative o ambiente com:
 source .venv/bin/activate
 ```
 
-## Como executar
-
-```bash
-streamlit run app.py
-```
-
-Depois de executar, acesse o endereço exibido pelo Streamlit no terminal, normalmente:
+Depois de iniciar, acesse o endereço exibido pelo Streamlit, normalmente:
 
 ```text
 http://localhost:8501
 ```
 
-## Roteiro curto para vídeo de demonstração
+## Estrutura do projeto
 
-1. Abrir o Dashboard.
-2. Mostrar os equipamentos cadastrados.
-3. Cadastrar um novo motor.
-4. Consultar o motor na tabela.
-5. Abrir a ficha técnica.
-6. Acessar Dados Brutos e mostrar a conversão simulada.
+```text
+sprint1_motor_digital_twin/
+├── app.py
+├── requirements.txt
+├── README.md
+├── data/
+│   ├── equipments.json
+│   └── telemetry_history.csv
+└── src/
+    ├── models/
+    │   └── equipment.py
+    ├── repositories/
+    │   ├── equipment_repository.py
+    │   └── telemetry_repository.py
+    ├── services/
+    │   ├── alert_service.py
+    │   ├── equipment_service.py
+    │   ├── sensor_service.py
+    │   └── telemetry_service.py
+    └── ui/
+        ├── components.py
+        └── pages.py
+```
 
-## Próximos passos
+## Dados simulados
 
-- Integrar sensores com ESP32.
-- Receber dados reais via MQTT.
-- Criar histórico de sensores.
-- Implementar alertas de anomalia.
-- Evoluir para um Digital Twin com dados reais.
+Os equipamentos continuam persistidos em `data/equipments.json`. A Sprint 2 adiciona exemplos para áreas operacionais úteis:
+
+- Linha de Produção A
+- Linha de Produção B
+- Utilidades
+- Bombeamento
+
+O histórico operacional é criado automaticamente em `data/telemetry_history.csv` com as colunas:
+
+```text
+timestamp, tag, temperatura_c, vibracao_mm_s, corrente_a, rotacao_rpm
+```
+
+Quando uma TAG ainda não tem histórico, o app gera pontos simulados iniciais. O botão **Gerar nova leitura simulada** acrescenta uma nova linha ao CSV para a TAG selecionada.
+
+## Regras de alerta
+
+- Temperatura: até 70 °C é saudável; até 85 °C é atenção; acima de 85 °C é crítico.
+- Vibração: até 4,5 mm/s é saudável; até 7,0 mm/s é atenção; acima de 7,0 mm/s é crítico.
+- Corrente: até 100% da corrente nominal é saudável; até 115% é atenção; acima de 115% é crítico.
+
+A saúde geral do ativo é calculada pelo pior status entre temperatura, vibração e corrente.
+
+## Placa simulada
+
+A Sprint 2 exibe uma placa simulada do motor na seção **Placa do Motor** do Dashboard Operacional. Ela é um placeholder visual em HTML/CSS com aparência de placa industrial, exibindo TAG, modelo, fabricante, potência, tensão, corrente nominal e rotação nominal a partir do cadastro do ativo.
+
+Essa placa representa visualmente a identificação do motor selecionado e reforça a rastreabilidade entre cadastro, localização e telemetria. O card técnico permanece abaixo da placa para deixar os dados legíveis e vinculados ao cadastro.
+
+OCR e visão computacional real não foram implementados nesta Sprint. A interface apenas prepara o espaço visual para uma evolução futura com leitura real de imagens de placa.

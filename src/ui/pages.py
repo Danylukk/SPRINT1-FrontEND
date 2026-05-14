@@ -1,27 +1,34 @@
 import time
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from src.models.equipment import Equipment
+from src.services.alert_service import AlertResult, AlertService
 from src.services.equipment_service import EquipmentService, EquipmentValidationError
 from src.services.sensor_service import (
     build_sensor_table,
     convert_raw_sensor_data,
     simulate_raw_sensor_data,
 )
+from src.services.telemetry_service import TelemetryService
 from src.ui.components import (
     equipment_to_dataframe,
     inject_global_styles,
     render_empty_state,
     render_equipment_card,
-    status_badge,
+    render_health_indicator,
+    render_operational_message,
+    render_simulated_nameplate,
+    render_telemetry_card,
     status_badge_html,
 )
 
 
 MENU_OPTIONS = [
     "Dashboard",
+    "Dashboard Operacional",
     "Cadastro Técnico",
     "Consulta de Equipamentos",
     "Dados Brutos",
@@ -35,13 +42,15 @@ def render_app() -> None:
 
     with st.sidebar:
         st.title("Motor Digital Twin")
-        st.caption("Sprint 1 | Cadastro e leitura simulada")
+        st.caption("Sprint 2 | Dashboard operacional de ativos")
         selected_page = st.radio("Menu principal", MENU_OPTIONS)
         st.divider()
-        st.caption("Persistência local em JSON")
+        st.caption("Persistência local em JSON e CSV")
 
     if selected_page == "Dashboard":
         render_dashboard(service)
+    elif selected_page == "Dashboard Operacional":
+        render_operational_dashboard(service)
     elif selected_page == "Cadastro Técnico":
         render_registration_page(service)
     elif selected_page == "Consulta de Equipamentos":
@@ -54,7 +63,7 @@ def render_app() -> None:
 
 def render_dashboard(service: EquipmentService) -> None:
     st.title("Dashboard")
-    st.write("Visão geral dos ativos cadastrados para a Sprint 1.")
+    st.write("Visão geral dos ativos cadastrados.")
 
     with st.spinner("Carregando indicadores dos equipamentos..."):
         time.sleep(0.3)
@@ -74,9 +83,168 @@ def render_dashboard(service: EquipmentService) -> None:
     st.divider()
     st.subheader("Equipamentos recentes")
     if equipments:
-        st.dataframe(equipment_to_dataframe(equipments), use_container_width=True, hide_index=True)
+        st.dataframe(equipment_to_dataframe(equipments), width="stretch", hide_index=True)
     else:
         render_empty_state("Nenhum equipamento cadastrado.")
+
+
+def render_operational_dashboard(service: EquipmentService) -> None:
+    st.title("Dashboard Operacional")
+    st.write("Monitore os ativos por área, com telemetria simulada, histórico local e alertas visuais.")
+
+    telemetry_service = TelemetryService()
+    alert_service = AlertService()
+
+    with st.spinner("Carregando ativos e histórico operacional..."):
+        time.sleep(0.3)
+        equipments = service.list_equipments()
+        telemetry_service.ensure_history(equipments)
+
+    if not equipments:
+        render_empty_state("Cadastre um equipamento para visualizar o dashboard operacional.")
+        return
+
+    areas = sorted({equipment.local_instalacao for equipment in equipments if equipment.local_instalacao})
+    selected_area = st.selectbox("Selecione a área/planta", areas)
+    area_equipments = [
+        equipment for equipment in equipments if equipment.local_instalacao == selected_area
+    ]
+
+    if not area_equipments:
+        render_empty_state("Nenhum equipamento encontrado para a área selecionada.")
+        return
+
+    tag_options = [equipment.tag for equipment in area_equipments]
+    selected_tag = st.selectbox("Selecione a TAG", tag_options)
+    selected_equipment = next(
+        (equipment for equipment in area_equipments if equipment.tag == selected_tag), None
+    )
+
+    if not selected_equipment:
+        st.error("Equipamento não encontrado.")
+        return
+
+    if st.button("Gerar nova leitura simulada", width="stretch"):
+        telemetry_service.append_current_snapshot(selected_equipment)
+        st.toast("Nova leitura simulada adicionada ao histórico.", icon="✅")
+
+    current_reading = telemetry_service.get_current_reading(selected_equipment)
+    alerts = alert_service.evaluate_all(
+        current_reading, selected_equipment.corrente_nominal
+    )
+    chart_data = telemetry_service.prepare_chart_data(selected_equipment)
+
+    st.divider()
+    render_operational_asset_header(selected_equipment)
+
+    st.subheader("Saúde operacional")
+    render_health_indicator(str(alerts["geral"]))
+
+    render_operational_message(
+        "As leituras são simuladas e salvas em data/telemetry_history.csv para validar fluxo, histórico e alertas antes da integração com sensores reais."
+    )
+
+    st.subheader("Telemetria atual")
+    render_telemetry_cards(current_reading, alerts, selected_equipment)
+
+    latest_timestamp = pd.to_datetime(current_reading["timestamp"], errors="coerce")
+    if pd.notna(latest_timestamp):
+        st.caption(f"Última atualização do histórico: {latest_timestamp:%d/%m/%Y %H:%M:%S}")
+
+    st.subheader("Histórico temporal")
+    render_telemetry_charts(chart_data)
+
+    st.subheader("Placa do Motor")
+    render_simulated_nameplate(selected_equipment)
+
+
+def render_operational_asset_header(equipment: Equipment) -> None:
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1.2])
+    col1.metric("TAG", equipment.tag)
+    col2.metric("Modelo", equipment.modelo)
+    col3.metric("Fabricante", equipment.fabricante)
+    with col4:
+        st.markdown(
+            f"""
+            <div class="info-section">
+                <h4>Cadastro e local</h4>
+                <p><strong>Status:</strong> {status_badge_html(equipment.status_operacional)}</p>
+                <p><strong>Local:</strong> {equipment.local_instalacao}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def render_telemetry_cards(
+    reading: dict, alerts: dict[str, AlertResult | str], equipment: Equipment
+) -> None:
+    temp_alert = alerts["temperatura"]
+    vibration_alert = alerts["vibracao"]
+    current_alert = alerts["corrente"]
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        render_telemetry_card(
+            "Temperatura",
+            f"{reading['temperatura_c']:.1f} °C",
+            temp_alert.status,
+            temp_alert.message,
+        )
+    with col2:
+        render_telemetry_card(
+            "Vibração",
+            f"{reading['vibracao_mm_s']:.2f} mm/s",
+            vibration_alert.status,
+            vibration_alert.message,
+        )
+    with col3:
+        render_telemetry_card(
+            "Corrente",
+            f"{reading['corrente_a']:.2f} A",
+            current_alert.status,
+            current_alert.message,
+        )
+    with col4:
+        render_telemetry_card(
+            "Rotação",
+            f"{reading['rotacao_rpm']:.0f} RPM",
+            str(alerts["geral"]),
+            f"Referência nominal: {equipment.rotacao_nominal:g} RPM.",
+        )
+
+
+def render_telemetry_charts(chart_data: pd.DataFrame) -> None:
+    if chart_data.empty:
+        render_empty_state("Histórico ainda não disponível para esta TAG.")
+        return
+
+    chart_data = chart_data.sort_values("timestamp")
+    chart_specs = [
+        ("temperatura_c", "Temperatura (°C)", "#f97316"),
+        ("vibracao_mm_s", "Vibração (mm/s)", "#38bdf8"),
+        ("corrente_a", "Corrente (A)", "#22c55e"),
+    ]
+
+    for column, title, color in chart_specs:
+        fig = px.line(
+            chart_data,
+            x="timestamp",
+            y=column,
+            markers=True,
+            title=title,
+        )
+        fig.update_traces(line_color=color, marker_color=color)
+        fig.update_layout(
+            template="plotly_dark",
+            margin=dict(l=10, r=10, t=48, b=10),
+            height=300,
+            xaxis_title="Horário",
+            yaxis_title=title,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,23,42,0.5)",
+        )
+        st.plotly_chart(fig, width="stretch")
 
 
 def render_registration_page(service: EquipmentService) -> None:
@@ -139,7 +307,7 @@ def render_registration_page(service: EquipmentService) -> None:
             key=form_key("confirm_save"),
         )
 
-        submitted = st.form_submit_button("Salvar equipamento", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Salvar equipamento", type="primary", width="stretch")
 
     if submitted:
         payload = {
@@ -163,7 +331,7 @@ def render_registration_page(service: EquipmentService) -> None:
                 st.error(str(error))
             else:
                 st.success(f"Equipamento {equipment.tag} cadastrado com sucesso.")
-                st.info("O cadastro já está disponível na consulta e nos dados brutos simulados.")
+                st.info("O cadastro já está disponível na consulta, nos dados brutos e no dashboard operacional.")
 
     with st.expander("Limpeza do formulário"):
         st.warning("Para evitar perda acidental de informações digitadas, confirme antes de limpar.")
@@ -186,7 +354,7 @@ def render_equipment_query_page(service: EquipmentService) -> None:
         return
 
     df = equipment_to_dataframe(equipments)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
 
     selected_tag = st.selectbox("Selecione um equipamento para abrir a ficha técnica", df["TAG"].tolist())
     selected_equipment = service.get_by_tag(selected_tag)
@@ -283,7 +451,7 @@ def render_raw_data_page(service: EquipmentService) -> None:
     col3.metric("Rotação", f"{converted_data['rotacao_rpm']:.0f} RPM")
 
     st.subheader("Tabela de conversão simulada")
-    st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(table_data), width="stretch", hide_index=True)
 
     with st.expander("Contexto da simulação"):
         st.write(
@@ -296,28 +464,31 @@ def render_raw_data_page(service: EquipmentService) -> None:
 def render_about_page() -> None:
     st.title("Sobre o Projeto")
     st.write(
-        "Projeto acadêmico da Sprint 1 focado nos fundamentos do ativo, cadastro técnico, "
-        "consulta de equipamentos e visualização inicial de dados simulados."
+        "Projeto acadêmico evoluído para a Sprint 2, mantendo cadastro técnico, consulta, ficha "
+        "técnica e dados brutos simulados da Sprint 1."
     )
 
     st.subheader("Objetivo")
     st.write(
         "Criar uma base organizada para evoluir um Digital Twin de motores e equipamentos, "
-        "mantendo a interface separada das regras de negócio."
+        "incluindo histórico operacional, alertas e visão por área."
     )
 
     st.subheader("Tecnologias")
-    st.write("Python, Streamlit, Pandas e persistência local em JSON.")
+    st.write("Python, Streamlit, Pandas, Plotly, JSON e CSV local.")
 
-    st.subheader("Requisitos atendidos na Sprint 1")
+    st.subheader("Requisitos atendidos")
     st.markdown(
         """
         - Cadastro técnico de ativos
         - Consulta de equipamentos
         - Ficha técnica organizada
         - Visualização de dados brutos simulados
-        - Conversão para unidades compreensíveis
-        - Estrutura preparada para integração futura com IoT/MQTT
+        - Dashboard Operacional por área e TAG
+        - Histórico local em CSV
+        - Gráficos temporais com Plotly
+        - Alertas visuais por temperatura, vibração e corrente
+        - Placa simulada em card HTML dinâmico
         """
     )
 
@@ -326,8 +497,8 @@ def render_about_page() -> None:
         """
         - Integração com ESP32
         - Comunicação via MQTT
-        - Histórico de sensores
-        - Alertas de anomalia
-        - Digital Twin com dados reais
+        - Autenticação de usuários
+        - Banco de dados externo
+        - OCR para leitura real de placas de motores
         """
     )
